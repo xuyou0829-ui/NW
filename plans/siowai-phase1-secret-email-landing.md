@@ -25,6 +25,19 @@
 
 - `SiowAI`
 
+### 设备级管理原则
+
+服务器和交换机后续一定要按**设备级**管理，不按“大类共用一个密码”管理。
+
+也就是说：
+
+- 每台服务器一条 secret
+- 每台交换机一条 secret
+- 每个 API 一条 secret
+- 默认不共用密码
+
+如果某些设备确实共用同一个凭证，也要显式记录“哪些资产共用”，不能靠默认猜。
+
 ### 条目类型建议
 
 给 SiowAI 使用的自动化凭证，建议**统一用 Bitwarden 的 Secure Note**，不要混着用 Login、Card、Identity。
@@ -277,6 +290,81 @@ SiowAI 输出：
 3. 不把完整 secret 打进日志
 4. 不把 secret 回传到聊天
 
+## 资产清单层（未来服务器 / 交换机 / API 必须有）
+
+除了 secret 本身，还要有一层**资产清单**，否则后面你会只记得密码，不记得那条密码到底对应哪台机器。
+
+### 每个资产建议至少记录
+
+1. `asset_id`
+   - 例：`server-prod-app-01`
+   - 例：`network-core-switch-01`
+
+2. `asset_kind`
+   - `server` / `switch` / `router` / `api`
+
+3. `environment`
+   - `prod` / `test` / `lab`
+
+4. `hostname`
+   - 主机名或设备名
+
+5. `mgmt_ip`
+   - 管理地址
+
+6. `vendor_or_os`
+   - 例：`Ubuntu 24.04` / `H3C` / `Cisco`
+
+7. `access_method`
+   - `ssh` / `https` / `api`
+
+8. `secret_path`
+   - 对应哪条 secret
+   - 例：`server/prod/app-01/ssh`
+
+9. `approval_level`
+   - `read_only` / `change` / `admin`
+
+10. `jump_host`
+   - 是否需要堡垒机、中转机
+
+11. `notes`
+   - 非敏感补充说明
+
+### 服务器 secret 例子
+
+- `path`: `server/prod/app-01/ssh`
+- `kind`: `server_ssh`
+- `endpoint_host`: `10.0.0.21`
+- `endpoint_port`: `22`
+- `username`: `ops`
+- `auth_mode`: `ssh_key` 或 `password`
+- `secret_value`: 私钥内容或密码
+- `scope`: `ssh-login`
+- `approval_level`: `change`
+
+### 交换机 secret 例子
+
+- `path`: `network/core-switch-01/admin`
+- `kind`: `network_device`
+- `endpoint_host`: `10.0.0.2`
+- `endpoint_port`: `22` 或 `443`
+- `username`: `admin`
+- `auth_mode`: `password` 或 `ssh_key`
+- `secret_value`: 登录密码或密钥
+- `scope`: `device-admin`
+- `approval_level`: `admin`
+
+### API secret 例子
+
+- `path`: `api/alicloud/ops`
+- `kind`: `api_token`
+- `endpoint_host`: `openapi.aliyun.com`
+- `auth_mode`: `token`
+- `secret_value`: API Key / Token
+- `scope`: `ops-read` 或更细粒度
+- `approval_level`: `change`
+
 ## 现实建议
 
 目前最合理的推进顺序是：
@@ -285,6 +373,7 @@ SiowAI 输出：
 2. 我这边再接 `bw` CLI
 3. 先做“读 secret 不发信”的测试
 4. 再做正式邮件发送测试
+5. 后面再补资产清单，把服务器和交换机逐台建档
 
 ## 下一步动作
 
@@ -294,3 +383,4 @@ SiowAI 输出：
 2. 定第一条 secret 的最终字段值
 3. 写读取脚本
 4. 写发信脚本
+5. 再补服务器 / 交换机的资产清单模板
