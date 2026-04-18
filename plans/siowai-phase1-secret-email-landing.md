@@ -318,22 +318,29 @@ SiowAI 输出：
 7. `access_method`
    - `ssh` / `https` / `api`
 
-8. `secret_path`
-   - 对应哪条 secret
+8. `login_secret_path`
+   - 登录阶段使用哪条 secret
    - 例：`server/prod/app-01/ssh`
 
-9. `approval_level`
+9. `escalation_secret_path`
+   - 提权阶段使用哪条 secret，可为空
+   - 例：`network/core-switch-01/enable`
+
+10. `privilege_mode`
+   - 例：`none` / `sudo` / `enable`
+
+11. `approval_level`
    - `read_only` / `change` / `admin`
 
-10. `jump_host`
+12. `jump_host`
    - 是否需要堡垒机、中转机
 
-11. `notes`
+13. `notes`
    - 非敏感补充说明
 
 ### 服务器 secret 例子
 
-- `path`: `server/prod/app-01/ssh`
+- `path`: `server/prod/app-01/login`
 - `kind`: `server_ssh`
 - `endpoint_host`: `10.0.0.21`
 - `endpoint_port`: `22`
@@ -343,16 +350,36 @@ SiowAI 输出：
 - `scope`: `ssh-login`
 - `approval_level`: `change`
 
+如果服务器还需要 sudo 密码，建议再单独一条：
+
+- `path`: `server/prod/app-01/sudo`
+- `kind`: `server_privilege`
+- `auth_mode`: `password`
+- `secret_value`: sudo 密码
+- `scope`: `sudo-escalation`
+- `approval_level`: `admin`
+
 ### 交换机 secret 例子
 
-- `path`: `network/core-switch-01/admin`
-- `kind`: `network_device`
+登录 secret：
+
+- `path`: `network/core-switch-01/login`
+- `kind`: `network_device_login`
 - `endpoint_host`: `10.0.0.2`
 - `endpoint_port`: `22` 或 `443`
 - `username`: `admin`
 - `auth_mode`: `password` 或 `ssh_key`
 - `secret_value`: 登录密码或密钥
-- `scope`: `device-admin`
+- `scope`: `device-login`
+- `approval_level`: `change`
+
+提权 secret（如 Cisco Enable）：
+
+- `path`: `network/core-switch-01/enable`
+- `kind`: `network_device_privilege`
+- `auth_mode`: `password`
+- `secret_value`: Enable 密码
+- `scope`: `privilege-escalation`
 - `approval_level`: `admin`
 
 ### API secret 例子
