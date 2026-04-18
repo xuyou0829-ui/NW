@@ -6,7 +6,7 @@ _Learn about the person you're helping. Update this as you go._
 - **What to call them:** SiowXu
 - **Pronouns:** _(optional)_
 - **Timezone:**
-- **Notes:** First contact on WhatsApp on 2026-04-18. Introduced themself as SiowXu and named me SiowAI.
+- **Notes:** First contact on WhatsApp on 2026-04-18. Introduced themself as SiowXu, named me SiowAI, and said they prefer me to feel more like a technical buddy.
 
 ## Context
 
