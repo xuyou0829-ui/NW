@@ -25,6 +25,16 @@
 
 - `SiowAI`
 
+### 条目类型建议
+
+给 SiowAI 使用的自动化凭证，建议**统一用 Bitwarden 的 Secure Note**，不要混着用 Login、Card、Identity。
+
+原因：
+
+1. 我们要的是**结构化读取**，不是浏览器自动填表
+2. 不同类型混用，后面字段会越来越乱
+3. Secure Note 更适合统一命名、统一字段、统一脚本读取
+
 在里面先只建这一条：
 
 - `mail/freyrtech/primary-smtp`
@@ -37,6 +47,75 @@
 - `api/openai/main`
 - `api/alicloud/ops`
 
+## 通用 secret 结构模板
+
+我建议以后所有给 SiowAI 用的 secret，都尽量遵守同一套结构。
+
+### 统一命名规则
+
+格式建议：
+
+- `<domain>/<system>/<account>/<purpose>`
+
+例子：
+
+- `mail/freyrtech/primary-smtp`
+- `server/prod/app-01/ssh`
+- `network/core-switch/admin`
+- `api/alicloud/ops`
+
+### 通用字段骨架
+
+每条 Secure Note 建议至少有这些字段：
+
+1. `path`
+   - 条目唯一标识
+   - 例：`mail/freyrtech/primary-smtp`
+
+2. `kind`
+   - secret 类型
+   - 例：`mail_smtp` / `server_ssh` / `network_device` / `api_token`
+
+3. `environment`
+   - 例：`prod` / `test` / `home` / `lab`
+
+4. `owner`
+   - 这条 secret 属于哪个系统或业务
+
+5. `endpoint_host`
+   - 目标主机、服务地址或 API 域名
+
+6. `endpoint_port`
+   - 端口，没有可留空
+
+7. `username`
+   - 登录用户名、邮箱地址、账号名
+
+8. `auth_mode`
+   - 例：`password` / `app_password` / `token` / `ssh_key` / `ssl` / `starttls`
+
+9. `secret_value`
+   - 真正的秘密内容
+   - 只在执行时读取
+
+10. `scope`
+   - 权限范围说明
+   - 例：`outgoing-mail-only`
+
+11. `approval_level`
+   - 使用前需要的确认等级
+   - 例：`read_only` / `send` / `change` / `admin`
+
+12. `rotation_rule`
+   - 什么时候轮换
+   - 例：`rotate if exposed in chat or every 90d`
+
+13. `revocation_hint`
+   - 出问题时去哪里撤销
+
+14. `notes`
+   - 非敏感补充说明
+
 ## 第一条邮箱 secret 建议字段
 
 条目名：
@@ -45,37 +124,57 @@
 
 建议字段：
 
-1. `display_name`
+1. `path`
+   - `mail/freyrtech/primary-smtp`
+
+2. `kind`
+   - `mail_smtp`
+
+3. `environment`
+   - `prod`
+
+4. `display_name`
    - 发件显示名
    - 例：`Siow Xu`
 
-2. `email_address`
+5. `email_address`
    - 发件邮箱地址
    - 例：`<your-email@domain>`
 
-3. `smtp_host`
+6. `endpoint_host`
    - SMTP 服务器地址
    - 例：`smtp.example.com`
 
-4. `smtp_port`
-   - SMTP 端口
+7. `endpoint_port`
    - 例：`465` 或 `587`
 
-5. `smtp_username`
+8. `username`
    - 通常与邮箱地址相同
 
-6. `smtp_secret`
+9. `auth_mode`
+   - `app_password`
+
+10. `secret_value`
    - SMTP 授权码 / 应用专用密码
    - 不要填主密码
 
-7. `security_mode`
+11. `security_mode`
    - `ssl` / `starttls`
 
-8. `purpose`
-   - 例：`SiowAI outgoing mail only`
+12. `scope`
+   - `outgoing-mail-only`
 
-9. `rotation_note`
-   - 例：`rotate if exposed in chat or logs`
+13. `approval_level`
+   - `send`
+
+14. `rotation_rule`
+   - `rotate if exposed in chat or logs`
+
+15. `revocation_hint`
+   - 记录去哪里撤销该授权码
+
+16. `notes`
+   - 非敏感备注
 
 ## 邮件工作流定义
 
