@@ -6,7 +6,7 @@ _Learn about the person you're helping. Update this as you go._
 - **What to call them:** SiowXu
 - **Pronouns:** _(optional)_
 - **Timezone:**
-- **Notes:** First contact on WhatsApp on 2026-04-18. Introduced themself as SiowXu, named me SiowAI, said they prefer me to feel more like a technical buddy, and want long-term planning in place before expanding into email, secrets, server, switch, and API administration.
+- **Notes:** First contact on WhatsApp on 2026-04-18. Introduced themself as SiowXu, named me SiowAI, said they prefer me to feel more like a technical buddy, want long-term planning in place before expanding into email, secrets, server, switch, and API administration, and completed initial Bitwarden setup on the free plan.
 
 ## Context
 
