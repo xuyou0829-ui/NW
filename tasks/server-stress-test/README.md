@@ -62,17 +62,22 @@ chmod +x run.sh
 - `REST_HOURS=4`
 - `BURN_PHASES=3`
 - `CHUNK_HOURS=1`
-- `MEMORY_PERCENT=80`
+- `MEMORY_MIN_PERCENT=75`
+- `MEMORY_TARGET_PERCENT=80`
+- `MEMORY_MAX_PERCENT=85`
 - `VM_WORKERS=1`
 - `VM_METHOD=all`
 - `CPU_WORKERS=0`
+- `CONTROL_WINDOW_SECONDS=60`
+- `MEMORY_RANGE_GRACE_SECONDS=30`
 - `SAMPLE_SECONDS=5`
 - `MAX_TEMP_C=90`
 - `TIME_UNIT_SECONDS=3600`（默认别改，仅用于开发时缩短测试时间）
 
 约束：
 
-- `MEMORY_PERCENT` 最高限制为 80
+- `MEMORY_TARGET_PERCENT` 最高限制为 80
+- `MEMORY_MAX_PERCENT` 最高限制为 85
 - `BURN_HOURS` 必须能被 `CHUNK_HOURS` 整除
 
 ## 输出结果
@@ -91,4 +96,5 @@ chmod +x run.sh
 - 新增 EDAC UE 错误：FAIL
 - 新增 EDAC CE 错误：PASS WITH WARNING
 - 温度不可读：PASS WITH WARNING
+- burn 阶段内存占用超出 75% - 85% 允许范围：FAIL
 - 全部阶段完成且无异常：PASS

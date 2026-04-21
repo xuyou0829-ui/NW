@@ -9,6 +9,11 @@ fi
 source "$CONFIG_FILE"
 
 : "${TIME_UNIT_SECONDS:=3600}"
+: "${MEMORY_TARGET_PERCENT:=${MEMORY_PERCENT:-80}}"
+: "${MEMORY_MIN_PERCENT:=75}"
+: "${MEMORY_MAX_PERCENT:=85}"
+: "${CONTROL_WINDOW_SECONDS:=60}"
+: "${MEMORY_RANGE_GRACE_SECONDS:=30}"
 
 BURN_SECONDS=$((BURN_HOURS * TIME_UNIT_SECONDS))
 REST_SECONDS=$((REST_HOURS * TIME_UNIT_SECONDS))
@@ -26,8 +31,23 @@ if (( BURN_SECONDS % CHUNK_SECONDS != 0 )); then
   exit 1
 fi
 
-if (( MEMORY_PERCENT <= 0 || MEMORY_PERCENT > 80 )); then
-  echo "MEMORY_PERCENT must be between 1 and 80" >&2
+if (( MEMORY_TARGET_PERCENT <= 0 || MEMORY_TARGET_PERCENT > 80 )); then
+  echo "MEMORY_TARGET_PERCENT must be between 1 and 80" >&2
+  exit 1
+fi
+
+if (( MEMORY_MIN_PERCENT <= 0 || MEMORY_MIN_PERCENT > MEMORY_TARGET_PERCENT )); then
+  echo "MEMORY_MIN_PERCENT must be > 0 and <= MEMORY_TARGET_PERCENT" >&2
+  exit 1
+fi
+
+if (( MEMORY_MAX_PERCENT < MEMORY_TARGET_PERCENT || MEMORY_MAX_PERCENT > 85 )); then
+  echo "MEMORY_MAX_PERCENT must be >= MEMORY_TARGET_PERCENT and <= 85" >&2
+  exit 1
+fi
+
+if (( CONTROL_WINDOW_SECONDS <= 0 )); then
+  echo "CONTROL_WINDOW_SECONDS must be > 0" >&2
   exit 1
 fi
 
@@ -75,7 +95,9 @@ PHASE_START_TS=$START_TS
 LAST_ALERTS="None detected"
 LAST_ALERT_COUNT=0
 MEMORY_HEALTH="Checking"
+MEMORY_RANGE_STATUS="Checking"
 STRESS_STATUS="idle"
+SEGMENT_START_TS=$START_TS
 
 if compgen -G "/sys/devices/system/edac/mc/mc*/ce_count" >/dev/null 2>&1; then
   EDAC_AVAILABLE=1
@@ -105,6 +127,7 @@ MAX_MEM_PCT=${MAX_MEM_PCT}
 MAX_TEMP_C_SEEN=${MAX_TEMP_C_SEEN}
 LAST_ALERT_COUNT=${LAST_ALERT_COUNT}
 MEMORY_HEALTH=${MEMORY_HEALTH}
+MEMORY_RANGE_STATUS=${MEMORY_RANGE_STATUS}
 STRESS_STATUS=${STRESS_STATUS}
 EOF
 }
@@ -258,6 +281,23 @@ refresh_memory_health() {
   else
     MEMORY_HEALTH="EDAC unavailable"
   fi
+
+  if awk -v current="$LAST_MEM_PCT" -v min="$MEMORY_MIN_PERCENT" 'BEGIN { exit !(current < min) }'; then
+    MEMORY_RANGE_STATUS="LOW"
+  elif awk -v current="$LAST_MEM_PCT" -v max="$MEMORY_MAX_PERCENT" 'BEGIN { exit !(current > max) }'; then
+    MEMORY_RANGE_STATUS="HIGH"
+  else
+    MEMORY_RANGE_STATUS="OK"
+  fi
+}
+
+calculate_vm_bytes_percent() {
+  awk -v used="$LAST_MEM_PCT" -v target="$MEMORY_TARGET_PERCENT" 'BEGIN {
+    desired = target - used
+    if (desired < 1) desired = 1
+    if (desired > 80) desired = 80
+    printf "%d", desired
+  }'
 }
 
 refresh_alerts() {
@@ -349,6 +389,8 @@ Live metrics
 ------------
 CPU utilization   : ${LAST_CPU}%
 Memory utilization: ${LAST_MEM_PCT}% (${LAST_MEM_USED_GB} GiB / ${LAST_MEM_TOTAL_GB} GiB)
+Memory band       : ${MEMORY_MIN_PERCENT}% - ${MEMORY_MAX_PERCENT}% (target ${MEMORY_TARGET_PERCENT}%)
+Range status      : ${MEMORY_RANGE_STATUS}
 Temperature       : ${LAST_TEMP_C} C (reasonable max)
 EDAC CE / UE      : ${LAST_CE_COUNT} / ${LAST_UE_COUNT}
 
@@ -396,6 +438,31 @@ check_temperature_limit() {
   fi
 }
 
+check_memory_band_limit() {
+  local segment_elapsed
+  if [[ "$CURRENT_PHASE" != burn* ]]; then
+    return 0
+  fi
+
+  segment_elapsed=$(( $(date +%s) - SEGMENT_START_TS ))
+  if (( segment_elapsed < MEMORY_RANGE_GRACE_SECONDS )); then
+    return 0
+  fi
+
+  if [[ "$MEMORY_RANGE_STATUS" != "OK" ]]; then
+    FAIL_REASON="Memory utilization ${LAST_MEM_PCT}% is outside the allowed range ${MEMORY_MIN_PERCENT}% - ${MEMORY_MAX_PERCENT}%"
+    STATUS="failed"
+    log_event "$FAIL_REASON"
+    if [[ -n "$STRESS_PID" ]] && kill -0 "$STRESS_PID" 2>/dev/null; then
+      kill "$STRESS_PID" 2>/dev/null || true
+      wait "$STRESS_PID" 2>/dev/null || true
+    fi
+    save_state
+    finalize_report
+    exit 1
+  fi
+}
+
 cleanup_on_signal() {
   STATUS="aborted"
   FAIL_REASON="Interrupted by signal"
@@ -422,6 +489,7 @@ monitor_for_duration() {
     append_metrics
     render_dashboard
     check_temperature_limit
+    check_memory_band_limit
     save_state
     sleep "$SAMPLE_SECONDS"
   done
@@ -433,7 +501,7 @@ monitor_for_duration() {
 }
 
 run_burn_chunk() {
-  local phase_num chunk_num exit_code
+  local phase_num chunk_num exit_code remaining_seconds segment_seconds vm_bytes_percent
   phase_num=$1
   chunk_num=$2
   CURRENT_PHASE="burn${phase_num}"
@@ -441,42 +509,58 @@ run_burn_chunk() {
   CURRENT_CHUNK=$chunk_num
   CHUNK_DURATION=$CHUNK_SECONDS
   CHUNK_START_TS=$(date +%s)
+  remaining_seconds=$CHUNK_SECONDS
 
   log_event "Starting ${CURRENT_PHASE} chunk ${chunk_num}/${CHUNKS_PER_BURN}"
   save_state
 
-  local stress_cmd=(stress-ng --vm "$VM_WORKERS" --vm-bytes "${MEMORY_PERCENT}%" --vm-keep --vm-method "$VM_METHOD" --verify --timeout "${CHUNK_SECONDS}s" --metrics-brief)
-  if (( CPU_WORKERS > 0 )); then
-    stress_cmd+=(--cpu "$CPU_WORKERS")
-  fi
+  while (( remaining_seconds > 0 )); do
+    update_live_metrics
+    vm_bytes_percent=$(calculate_vm_bytes_percent)
+    segment_seconds=$CONTROL_WINDOW_SECONDS
+    if (( segment_seconds > remaining_seconds )); then
+      segment_seconds=$remaining_seconds
+    fi
+    SEGMENT_START_TS=$(date +%s)
 
-  "${stress_cmd[@]}" >> "$STRESS_LOG" 2>&1 &
-  STRESS_PID=$!
+    log_event "Running ${CURRENT_PHASE} chunk ${chunk_num}/${CHUNKS_PER_BURN} segment for ${segment_seconds}s with vm-bytes ${vm_bytes_percent}%"
 
-  while kill -0 "$STRESS_PID" 2>/dev/null; do
+    local stress_cmd=(stress-ng --vm "$VM_WORKERS" --vm-bytes "${vm_bytes_percent}%" --vm-keep --vm-method "$VM_METHOD" --verify --timeout "${segment_seconds}s" --metrics-brief)
+    if (( CPU_WORKERS > 0 )); then
+      stress_cmd+=(--cpu "$CPU_WORKERS")
+    fi
+
+    "${stress_cmd[@]}" >> "$STRESS_LOG" 2>&1 &
+    STRESS_PID=$!
+
+    while kill -0 "$STRESS_PID" 2>/dev/null; do
+      update_live_metrics
+      append_metrics
+      render_dashboard
+      check_temperature_limit
+      check_memory_band_limit
+      save_state
+      sleep "$SAMPLE_SECONDS"
+    done
+
+    wait "$STRESS_PID"
+    exit_code=$?
+    STRESS_PID=""
+
     update_live_metrics
     append_metrics
     render_dashboard
-    check_temperature_limit
     save_state
-    sleep "$SAMPLE_SECONDS"
+
+    if (( exit_code != 0 )); then
+      STATUS="failed"
+      FAIL_REASON="stress-ng failed in ${CURRENT_PHASE} chunk ${chunk_num} with exit code ${exit_code}"
+      log_event "$FAIL_REASON"
+      return 1
+    fi
+
+    remaining_seconds=$((remaining_seconds - segment_seconds))
   done
-
-  wait "$STRESS_PID"
-  exit_code=$?
-  STRESS_PID=""
-
-  update_live_metrics
-  append_metrics
-  render_dashboard
-  save_state
-
-  if (( exit_code != 0 )); then
-    STATUS="failed"
-    FAIL_REASON="stress-ng failed in ${CURRENT_PHASE} chunk ${chunk_num} with exit code ${exit_code}"
-    log_event "$FAIL_REASON"
-    return 1
-  fi
 
   log_event "Completed ${CURRENT_PHASE} chunk ${chunk_num}/${CHUNKS_PER_BURN}"
   return 0
@@ -537,7 +621,9 @@ Total runtime       : $(human_time "$total_runtime")
 Configured burn     : ${BURN_PHASES} x ${BURN_HOURS}h
 Configured rest     : ${REST_HOURS}h between burn phases
 Chunk size          : ${CHUNK_HOURS}h
-Memory target       : ${MEMORY_PERCENT}%
+Memory band         : ${MEMORY_MIN_PERCENT}% - ${MEMORY_MAX_PERCENT}%
+Memory target       : ${MEMORY_TARGET_PERCENT}%
+Control window      : ${CONTROL_WINDOW_SECONDS}s
 Peak CPU usage      : ${MAX_CPU}%
 Peak memory usage   : ${MAX_MEM_PCT}%
 Peak temperature    : ${MAX_TEMP_C_SEEN} C
@@ -553,7 +639,7 @@ EOF
 
 main() {
   init_metrics_log
-  log_event "Starting memory stress test with ${BURN_PHASES} burn phases, ${CHUNKS_PER_BURN} chunks per burn phase, memory target ${MEMORY_PERCENT}%"
+  log_event "Starting memory stress test with ${BURN_PHASES} burn phases, ${CHUNKS_PER_BURN} chunks per burn phase, memory band ${MEMORY_MIN_PERCENT}% - ${MEMORY_MAX_PERCENT}% and target ${MEMORY_TARGET_PERCENT}%"
   update_live_metrics
   save_state
 
