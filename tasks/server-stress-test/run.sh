@@ -72,6 +72,10 @@ SENSOR_WARNING=0
 EDAC_AVAILABLE=0
 OVERALL_ELAPSED_AT_PHASE_START=0
 PHASE_START_TS=$START_TS
+LAST_ALERTS="None detected"
+LAST_ALERT_COUNT=0
+MEMORY_HEALTH="Checking"
+STRESS_STATUS="idle"
 
 if compgen -G "/sys/devices/system/edac/mc/mc*/ce_count" >/dev/null 2>&1; then
   EDAC_AVAILABLE=1
@@ -99,6 +103,9 @@ LAST_UE_COUNT=${LAST_UE_COUNT}
 MAX_CPU=${MAX_CPU}
 MAX_MEM_PCT=${MAX_MEM_PCT}
 MAX_TEMP_C_SEEN=${MAX_TEMP_C_SEEN}
+LAST_ALERT_COUNT=${LAST_ALERT_COUNT}
+MEMORY_HEALTH=${MEMORY_HEALTH}
+STRESS_STATUS=${STRESS_STATUS}
 EOF
 }
 
@@ -162,15 +169,38 @@ read_memory_usage() {
   LAST_MEM_TOTAL_GB=$(awk -v total="$mem_total_kb" 'BEGIN { printf "%.1f", total / 1024 / 1024 }')
 }
 
+normalize_temp_stream() {
+  awk '
+    BEGIN { max = "" }
+    {
+      gsub(/[^0-9.+-]/, "", $0)
+      if ($0 == "" || $0 == "+" || $0 == "-") next
+      raw = $0 + 0
+      temp = ""
+      if (raw > 1000 && raw < 200000) {
+        temp = raw / 1000
+      } else if (raw > 0 && raw < 150) {
+        temp = raw
+      }
+      if (temp != "" && temp > 0 && temp < 150) {
+        if (max == "" || temp > max) max = temp
+      }
+    }
+    END {
+      if (max != "") printf "%.1f", max
+    }
+  '
+}
+
 read_temperature() {
   local max_temp=""
   if command -v sensors >/dev/null 2>&1; then
-    max_temp=$(sensors 2>/dev/null | grep -Eo '[-+]?[0-9]+(\.[0-9]+)?°C' | tr -d '+' | tr -d '°C' | awk 'BEGIN { max = "" } { if ($1 ~ /^[0-9.]+$/) { if (max == "" || $1 > max) max = $1 } } END { if (max == "") print ""; else printf "%.1f", max }') || true
+    max_temp=$(sensors 2>/dev/null | grep -Eo '[-+]?[0-9]+(\.[0-9]+)?°C' | normalize_temp_stream) || true
   fi
 
   if [[ -z "$max_temp" ]]; then
     local thermal
-    thermal=$(find /sys/class/thermal -maxdepth 2 -name temp -type f 2>/dev/null | xargs -r cat 2>/dev/null | awk 'BEGIN { max = "" } { c = $1 / 1000; if (c > 0 && (max == "" || c > max)) max = c } END { if (max == "") print ""; else printf "%.1f", max }') || true
+    thermal=$(find /sys/class/thermal -maxdepth 2 -name temp -type f 2>/dev/null | xargs -r cat 2>/dev/null | normalize_temp_stream) || true
     max_temp="$thermal"
   fi
 
@@ -210,21 +240,76 @@ read_edac_counts() {
 baseline_ce=$(sum_edac_counts ce_count)
 baseline_ue=$(sum_edac_counts ue_count)
 
+refresh_memory_health() {
+  local ce_delta="N/A" ue_delta="N/A"
+  if [[ "$baseline_ce" =~ ^[0-9]+$ ]] && [[ "$LAST_CE_COUNT" =~ ^[0-9]+$ ]]; then
+    ce_delta=$((LAST_CE_COUNT - baseline_ce))
+  fi
+  if [[ "$baseline_ue" =~ ^[0-9]+$ ]] && [[ "$LAST_UE_COUNT" =~ ^[0-9]+$ ]]; then
+    ue_delta=$((LAST_UE_COUNT - baseline_ue))
+  fi
+
+  if [[ "$ue_delta" != "N/A" && "$ue_delta" -gt 0 ]]; then
+    MEMORY_HEALTH="FAIL (UE +${ue_delta})"
+  elif [[ "$ce_delta" != "N/A" && "$ce_delta" -gt 0 ]]; then
+    MEMORY_HEALTH="WARN (CE +${ce_delta})"
+  elif (( EDAC_AVAILABLE == 1 )); then
+    MEMORY_HEALTH="OK"
+  else
+    MEMORY_HEALTH="EDAC unavailable"
+  fi
+}
+
+refresh_alerts() {
+  local event_alerts stress_alerts combined
+  event_alerts=$(tail -n 50 "$EVENT_LOG" 2>/dev/null | grep -Ei 'fail|error|warn|abort|exceed|interrupt|EDAC|temperature .*exceeded' | tail -n 3 || true)
+  stress_alerts=$(tail -n 200 "$STRESS_LOG" 2>/dev/null | grep -Ei 'error|fail|warn|oom|killed|segfault|assert|corrupt|mce|edac|ecc|miscompare' | tail -n 3 || true)
+  combined=$(printf "%s\n%s\n" "$event_alerts" "$stress_alerts" | awk 'NF && !seen[$0]++')
+
+  if [[ -n "$combined" ]]; then
+    LAST_ALERTS="$combined"
+    LAST_ALERT_COUNT=$(printf "%s\n" "$combined" | awk 'NF { count++ } END { print count + 0 }')
+  else
+    LAST_ALERTS="None detected"
+    LAST_ALERT_COUNT=0
+  fi
+}
+
+refresh_stress_status() {
+  if [[ -n "$STRESS_PID" ]] && kill -0 "$STRESS_PID" 2>/dev/null; then
+    STRESS_STATUS="running (pid ${STRESS_PID})"
+  elif [[ "$STATUS" == "failed" ]]; then
+    STRESS_STATUS="failed"
+  elif [[ "$CURRENT_PHASE" == rest* ]]; then
+    STRESS_STATUS="resting"
+  else
+    STRESS_STATUS="idle"
+  fi
+}
+
 update_live_metrics() {
   read_cpu_usage
   read_memory_usage
   read_temperature
   read_edac_counts
+  refresh_memory_health
+  refresh_alerts
+  refresh_stress_status
   MAX_CPU=$(max_float "$MAX_CPU" "$LAST_CPU")
   MAX_MEM_PCT=$(max_float "$MAX_MEM_PCT" "$LAST_MEM_PCT")
   MAX_TEMP_C_SEEN=$(max_float "$MAX_TEMP_C_SEEN" "$LAST_TEMP_C")
 }
 
 render_dashboard() {
-  local now overall_elapsed phase_elapsed phase_total remaining overall_pct phase_pct chunk_elapsed chunk_remaining
+  local now overall_elapsed phase_elapsed phase_total remaining overall_pct phase_pct chunk_elapsed chunk_remaining display_overall_elapsed display_phase_elapsed
   now=$(date +%s)
   overall_elapsed=$((now - START_TS))
   phase_elapsed=$((now - PHASE_START_TS))
+
+  display_overall_elapsed=$overall_elapsed
+  if (( display_overall_elapsed > TOTAL_SECONDS )); then
+    display_overall_elapsed=$TOTAL_SECONDS
+  fi
 
   if [[ "$CURRENT_PHASE" == burn* ]]; then
     phase_total=$BURN_SECONDS
@@ -234,8 +319,13 @@ render_dashboard() {
     phase_total=0
   fi
 
-  overall_pct=$(progress_pct "$overall_elapsed" "$TOTAL_SECONDS")
-  phase_pct=$(progress_pct "$phase_elapsed" "$phase_total")
+  display_phase_elapsed=$phase_elapsed
+  if (( phase_total > 0 && display_phase_elapsed > phase_total )); then
+    display_phase_elapsed=$phase_total
+  fi
+
+  overall_pct=$(progress_pct "$display_overall_elapsed" "$TOTAL_SECONDS")
+  phase_pct=$(progress_pct "$display_phase_elapsed" "$phase_total")
   chunk_elapsed=$((now - CHUNK_START_TS))
   chunk_remaining=$((CHUNK_DURATION - chunk_elapsed))
   remaining=$((TOTAL_SECONDS - overall_elapsed))
@@ -250,8 +340,8 @@ Server Memory Stress Test
 Status            : ${STATUS}
 Current phase     : ${CURRENT_PHASE} (${CURRENT_PHASE_INDEX})
 Current chunk     : ${CURRENT_CHUNK}
-Overall progress  : ${overall_pct}% ($(human_time "$overall_elapsed") / $(human_time "$TOTAL_SECONDS"))
-Phase progress    : ${phase_pct}% ($(human_time "$phase_elapsed") / $(human_time "$phase_total"))
+Overall progress  : ${overall_pct}% ($(human_time "$display_overall_elapsed") / $(human_time "$TOTAL_SECONDS"))
+Phase progress    : ${phase_pct}% ($(human_time "$display_phase_elapsed") / $(human_time "$phase_total"))
 Time remaining    : $(human_time "$remaining")
 Chunk remaining   : $(human_time "$chunk_remaining")
 
@@ -259,8 +349,18 @@ Live metrics
 ------------
 CPU utilization   : ${LAST_CPU}%
 Memory utilization: ${LAST_MEM_PCT}% (${LAST_MEM_USED_GB} GiB / ${LAST_MEM_TOTAL_GB} GiB)
-Temperature       : ${LAST_TEMP_C} C
+Temperature       : ${LAST_TEMP_C} C (reasonable max)
 EDAC CE / UE      : ${LAST_CE_COUNT} / ${LAST_UE_COUNT}
+
+Health checks
+-------------
+Stress process    : ${STRESS_STATUS}
+Memory health     : ${MEMORY_HEALTH}
+Detected alerts   : ${LAST_ALERT_COUNT}
+
+Latest alerts
+-------------
+${LAST_ALERTS}
 
 Peak metrics
 ------------
