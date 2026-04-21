@@ -109,6 +109,9 @@ MEMORY_HEALTH="Checking"
 MEMORY_RANGE_STATUS="Checking"
 STRESS_STATUS="idle"
 SEGMENT_START_TS=$START_TS
+VM_ACTIVE_WORKERS=0
+VM_ACTIVE_BYTES_PERCENT=0
+VM_ACTIVE_TOTAL_PERCENT=0
 
 if compgen -G "/sys/devices/system/edac/mc/mc*/ce_count" >/dev/null 2>&1; then
   EDAC_AVAILABLE=1
@@ -320,13 +323,29 @@ refresh_memory_health() {
   fi
 }
 
-calculate_vm_bytes_percent() {
-  awk -v used="$LAST_MEM_PCT" -v target="$MEMORY_TARGET_PERCENT" 'BEGIN {
-    desired = target - used
-    if (desired < 1) desired = 1
-    if (desired > 80) desired = 80
-    printf "%d", desired
-  }'
+plan_vm_load() {
+  local desired
+  desired=$(awk -v used="$LAST_MEM_PCT" -v target="$MEMORY_TARGET_PERCENT" 'BEGIN {
+    value = target - used
+    if (value < 1) value = 1
+    if (value > 80) value = 80
+    printf "%d", value
+  }')
+
+  VM_ACTIVE_WORKERS=$VM_WORKERS
+  if (( desired < VM_ACTIVE_WORKERS )); then
+    VM_ACTIVE_WORKERS=$desired
+  fi
+  if (( VM_ACTIVE_WORKERS < 1 )); then
+    VM_ACTIVE_WORKERS=1
+  fi
+
+  VM_ACTIVE_BYTES_PERCENT=$(( (desired + VM_ACTIVE_WORKERS - 1) / VM_ACTIVE_WORKERS ))
+  if (( VM_ACTIVE_BYTES_PERCENT < 1 )); then
+    VM_ACTIVE_BYTES_PERCENT=1
+  fi
+
+  VM_ACTIVE_TOTAL_PERCENT=$(( VM_ACTIVE_WORKERS * VM_ACTIVE_BYTES_PERCENT ))
 }
 
 refresh_alerts() {
@@ -419,6 +438,7 @@ Live metrics
 CPU utilization   : ${LAST_CPU}%
 Memory utilization: ${LAST_MEM_PCT}% (${LAST_MEM_USED_GB} GiB / ${LAST_MEM_TOTAL_GB} GiB)
 Memory band       : ${MEMORY_MIN_PERCENT}% - ${MEMORY_MAX_PERCENT}% (target ${MEMORY_TARGET_PERCENT}%)
+Load plan         : ${VM_ACTIVE_WORKERS} workers x ${VM_ACTIVE_BYTES_PERCENT}% = ${VM_ACTIVE_TOTAL_PERCENT}%
 Range status      : ${MEMORY_RANGE_STATUS}
 Temperature       : ${LAST_TEMP_C} C (reasonable max)
 EDAC CE / UE      : ${LAST_CE_COUNT} / ${LAST_UE_COUNT}
@@ -530,7 +550,7 @@ monitor_for_duration() {
 }
 
 run_burn_chunk() {
-  local phase_num chunk_num exit_code remaining_seconds segment_seconds vm_bytes_percent
+  local phase_num chunk_num exit_code remaining_seconds segment_seconds
   phase_num=$1
   chunk_num=$2
   CURRENT_PHASE="burn${phase_num}"
@@ -545,16 +565,16 @@ run_burn_chunk() {
 
   while (( remaining_seconds > 0 )); do
     update_live_metrics
-    vm_bytes_percent=$(calculate_vm_bytes_percent)
+    plan_vm_load
     segment_seconds=$CONTROL_WINDOW_SECONDS
     if (( segment_seconds > remaining_seconds )); then
       segment_seconds=$remaining_seconds
     fi
     SEGMENT_START_TS=$(date +%s)
 
-    log_event "Running ${CURRENT_PHASE} chunk ${chunk_num}/${CHUNKS_PER_BURN} segment for ${segment_seconds}s with vm-bytes ${vm_bytes_percent}%"
+    log_event "Running ${CURRENT_PHASE} chunk ${chunk_num}/${CHUNKS_PER_BURN} segment for ${segment_seconds}s with ${VM_ACTIVE_WORKERS} workers x ${VM_ACTIVE_BYTES_PERCENT}% (total ${VM_ACTIVE_TOTAL_PERCENT}%)"
 
-    local stress_cmd=(stress-ng --vm "$VM_WORKERS" --vm-bytes "${vm_bytes_percent}%" --vm-keep --vm-method "$VM_METHOD" --verify --timeout "${segment_seconds}s" --metrics-brief)
+    local stress_cmd=(stress-ng --vm "$VM_ACTIVE_WORKERS" --vm-bytes "${VM_ACTIVE_BYTES_PERCENT}%" --vm-keep --vm-method "$VM_METHOD" --verify --timeout "${segment_seconds}s" --metrics-brief)
     if (( CPU_WORKERS > 0 )); then
       stress_cmd+=(--cpu "$CPU_WORKERS")
     fi
