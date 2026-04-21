@@ -90,6 +90,8 @@ LAST_CPU="0.0"
 LAST_MEM_PCT="0.0"
 LAST_MEM_USED_GB="0.0"
 LAST_MEM_TOTAL_GB="0.0"
+LAST_MEM_USED_MIB=0
+LAST_MEM_TOTAL_MIB=0
 LAST_TEMP_C="N/A"
 LAST_CE_COUNT="N/A"
 LAST_UE_COUNT="N/A"
@@ -110,8 +112,8 @@ MEMORY_RANGE_STATUS="Checking"
 STRESS_STATUS="idle"
 SEGMENT_START_TS=$START_TS
 VM_ACTIVE_WORKERS=0
-VM_ACTIVE_BYTES_PERCENT=0
-VM_ACTIVE_TOTAL_PERCENT=0
+VM_ACTIVE_BYTES_MIB=0
+VM_ACTIVE_TOTAL_MIB=0
 
 if compgen -G "/sys/devices/system/edac/mc/mc*/ce_count" >/dev/null 2>&1; then
   EDAC_AVAILABLE=1
@@ -222,6 +224,12 @@ read_memory_usage() {
   LAST_MEM_PCT=$(awk -v used="$mem_used_kb" -v total="$mem_total_kb" 'BEGIN { if (total <= 0) printf "0.0"; else printf "%.1f", (used / total) * 100 }')
   LAST_MEM_USED_GB=$(awk -v used="$mem_used_kb" 'BEGIN { printf "%.1f", used / 1024 / 1024 }')
   LAST_MEM_TOTAL_GB=$(awk -v total="$mem_total_kb" 'BEGIN { printf "%.1f", total / 1024 / 1024 }')
+  LAST_MEM_USED_MIB=$((mem_used_kb / 1024))
+  LAST_MEM_TOTAL_MIB=$((mem_total_kb / 1024))
+}
+
+format_mib_to_gib() {
+  awk -v mib="$1" 'BEGIN { printf "%.1f", mib / 1024 }'
 }
 
 normalize_temp_stream() {
@@ -250,7 +258,7 @@ normalize_temp_stream() {
 read_temperature() {
   local max_temp=""
   if command -v sensors >/dev/null 2>&1; then
-    max_temp=$(sensors 2>/dev/null | grep -Eo '[-+]?[0-9]+(\.[0-9]+)?°C' | normalize_temp_stream) || true
+    max_temp=$(sensors 2>/dev/null | grep -Ei 'Package id|Tctl|Tdie|CPU|Core [0-9]+|temp[0-9]+' | grep -Eo '[-+]?[0-9]+(\.[0-9]+)?°C' | normalize_temp_stream) || true
   fi
 
   if [[ -z "$max_temp" ]]; then
@@ -324,28 +332,29 @@ refresh_memory_health() {
 }
 
 plan_vm_load() {
-  local desired
-  desired=$(awk -v used="$LAST_MEM_PCT" -v target="$MEMORY_TARGET_PERCENT" 'BEGIN {
-    value = target - used
-    if (value < 1) value = 1
-    if (value > 80) value = 80
-    printf "%d", value
-  }')
+  local target_used_mib desired_total_mib minimum_alloc_mib
+  target_used_mib=$(( LAST_MEM_TOTAL_MIB * MEMORY_TARGET_PERCENT / 100 ))
+  desired_total_mib=$(( target_used_mib - LAST_MEM_USED_MIB ))
+  minimum_alloc_mib=1024
+
+  if (( desired_total_mib < minimum_alloc_mib )); then
+    desired_total_mib=$minimum_alloc_mib
+  fi
 
   VM_ACTIVE_WORKERS=$VM_WORKERS
-  if (( desired < VM_ACTIVE_WORKERS )); then
-    VM_ACTIVE_WORKERS=$desired
+  if (( desired_total_mib < VM_ACTIVE_WORKERS * minimum_alloc_mib )); then
+    VM_ACTIVE_WORKERS=$(( desired_total_mib / minimum_alloc_mib ))
   fi
   if (( VM_ACTIVE_WORKERS < 1 )); then
     VM_ACTIVE_WORKERS=1
   fi
 
-  VM_ACTIVE_BYTES_PERCENT=$(( (desired + VM_ACTIVE_WORKERS - 1) / VM_ACTIVE_WORKERS ))
-  if (( VM_ACTIVE_BYTES_PERCENT < 1 )); then
-    VM_ACTIVE_BYTES_PERCENT=1
+  VM_ACTIVE_BYTES_MIB=$(( (desired_total_mib + VM_ACTIVE_WORKERS - 1) / VM_ACTIVE_WORKERS ))
+  if (( VM_ACTIVE_BYTES_MIB < minimum_alloc_mib )); then
+    VM_ACTIVE_BYTES_MIB=$minimum_alloc_mib
   fi
 
-  VM_ACTIVE_TOTAL_PERCENT=$(( VM_ACTIVE_WORKERS * VM_ACTIVE_BYTES_PERCENT ))
+  VM_ACTIVE_TOTAL_MIB=$(( VM_ACTIVE_WORKERS * VM_ACTIVE_BYTES_MIB ))
 }
 
 refresh_alerts() {
@@ -438,7 +447,7 @@ Live metrics
 CPU utilization   : ${LAST_CPU}%
 Memory utilization: ${LAST_MEM_PCT}% (${LAST_MEM_USED_GB} GiB / ${LAST_MEM_TOTAL_GB} GiB)
 Memory band       : ${MEMORY_MIN_PERCENT}% - ${MEMORY_MAX_PERCENT}% (target ${MEMORY_TARGET_PERCENT}%)
-Load plan         : ${VM_ACTIVE_WORKERS} workers x ${VM_ACTIVE_BYTES_PERCENT}% = ${VM_ACTIVE_TOTAL_PERCENT}%
+Load plan         : ${VM_ACTIVE_WORKERS} workers x $(format_mib_to_gib "$VM_ACTIVE_BYTES_MIB") GiB = $(format_mib_to_gib "$VM_ACTIVE_TOTAL_MIB") GiB
 Range status      : ${MEMORY_RANGE_STATUS}
 Temperature       : ${LAST_TEMP_C} C (reasonable max)
 EDAC CE / UE      : ${LAST_CE_COUNT} / ${LAST_UE_COUNT}
@@ -493,7 +502,7 @@ check_memory_band_limit() {
     return 0
   fi
 
-  segment_elapsed=$(( $(date +%s) - SEGMENT_START_TS ))
+  segment_elapsed=$(( $(date +%s) - CHUNK_START_TS ))
   if (( segment_elapsed < MEMORY_RANGE_GRACE_SECONDS )); then
     return 0
   fi
@@ -572,9 +581,9 @@ run_burn_chunk() {
     fi
     SEGMENT_START_TS=$(date +%s)
 
-    log_event "Running ${CURRENT_PHASE} chunk ${chunk_num}/${CHUNKS_PER_BURN} segment for ${segment_seconds}s with ${VM_ACTIVE_WORKERS} workers x ${VM_ACTIVE_BYTES_PERCENT}% (total ${VM_ACTIVE_TOTAL_PERCENT}%)"
+    log_event "Running ${CURRENT_PHASE} chunk ${chunk_num}/${CHUNKS_PER_BURN} segment for ${segment_seconds}s with ${VM_ACTIVE_WORKERS} workers x $(format_mib_to_gib "$VM_ACTIVE_BYTES_MIB")GiB (total $(format_mib_to_gib "$VM_ACTIVE_TOTAL_MIB")GiB)"
 
-    local stress_cmd=(stress-ng --vm "$VM_ACTIVE_WORKERS" --vm-bytes "${VM_ACTIVE_BYTES_PERCENT}%" --vm-keep --vm-method "$VM_METHOD" --verify --timeout "${segment_seconds}s" --metrics-brief)
+    local stress_cmd=(stress-ng --vm "$VM_ACTIVE_WORKERS" --vm-bytes "${VM_ACTIVE_BYTES_MIB}M" --vm-keep --vm-method "$VM_METHOD" --verify --timeout "${segment_seconds}s" --metrics-brief)
     if (( CPU_WORKERS > 0 )); then
       stress_cmd+=(--cpu "$CPU_WORKERS")
     fi

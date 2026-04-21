@@ -27,7 +27,7 @@
   - 合理范围内的最高温度（自动忽略明显异常值）
   - EDAC CE / UE 计数（如果系统支持）
   - Memory health 汇总
-  - 当前 load plan（多少 worker、每个 worker 打多少）
+  - 当前 load plan（多少 worker、每个 worker 打多少 GiB）
   - 最新告警 / 报错摘要
 
 ## 依赖
@@ -66,14 +66,19 @@ chmod +x run.sh
 - `MEMORY_MIN_PERCENT=75`
 - `MEMORY_TARGET_PERCENT=80`
 - `MEMORY_MAX_PERCENT=85`
-- `VM_WORKERS=4`
+- `VM_WORKERS=8`
 - `VM_METHOD=all`
 - `CPU_WORKERS=0`
-- `CONTROL_WINDOW_SECONDS=60`
-- `MEMORY_RANGE_GRACE_SECONDS=30`
+- `CONTROL_WINDOW_SECONDS=300`
+- `MEMORY_RANGE_GRACE_SECONDS=900`
 - `SAMPLE_SECONDS=5`
 - `MAX_TEMP_C=90`
 - `TIME_UNIT_SECONDS=3600`（默认别改，仅用于开发时缩短测试时间）
+
+说明：
+
+- 当前版本会按 GiB 计算 load plan，不再只按百分比给单个 worker
+- `MEMORY_RANGE_GRACE_SECONDS` 用来给大内存机器预留升载时间
 
 约束：
 
