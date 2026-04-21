@@ -78,6 +78,7 @@ METRICS_LOG="${LOG_DIR}/metrics.csv"
 STRESS_LOG="${LOG_DIR}/stress-ng.log"
 STATE_FILE="${STATE_DIR}/current_state.env"
 SUMMARY_FILE="${REPORT_DIR}/summary.txt"
+RUN_ID=$(date -u +"%Y%m%dT%H%M%SZ")
 
 START_TS=$(date +%s)
 STATUS="running"
@@ -140,6 +141,24 @@ MEMORY_HEALTH=${MEMORY_HEALTH}
 MEMORY_RANGE_STATUS=${MEMORY_RANGE_STATUS}
 STRESS_STATUS=${STRESS_STATUS}
 EOF
+}
+
+rotate_file_if_exists() {
+  local file archive
+  file=$1
+  if [[ -f "$file" && -s "$file" ]]; then
+    archive="${file}.${RUN_ID}.bak"
+    mv "$file" "$archive"
+  fi
+}
+
+prepare_run_files() {
+  rotate_file_if_exists "$EVENT_LOG"
+  rotate_file_if_exists "$STRESS_LOG"
+  rotate_file_if_exists "$METRICS_LOG"
+  rotate_file_if_exists "$SUMMARY_FILE"
+  : > "$EVENT_LOG"
+  : > "$STRESS_LOG"
 }
 
 init_metrics_log() {
@@ -648,6 +667,7 @@ EOF
 }
 
 main() {
+  prepare_run_files
   init_metrics_log
   log_event "Starting memory stress test with ${BURN_PHASES} burn phases, ${CHUNKS_PER_BURN} chunks per burn phase, memory band ${MEMORY_MIN_PERCENT}% - ${MEMORY_MAX_PERCENT}% and target ${MEMORY_TARGET_PERCENT}%"
   update_live_metrics
