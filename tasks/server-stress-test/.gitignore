@@ -4,3 +4,12 @@ report/
 smoke-logs/
 smoke-state/
 smoke-report/
+smoke-logs-stress-ng/
+smoke-state-stress-ng/
+smoke-report-stress-ng/
+stressapptest/logs/
+stressapptest/state/
+stressapptest/report/
+stress-ng/logs-stress-ng/
+stress-ng/state-stress-ng/
+stress-ng/report-stress-ng/

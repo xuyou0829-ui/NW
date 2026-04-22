@@ -4,8 +4,8 @@
 
 ## 文件
 
-- `run-stress-ng.sh`
-- `config.stress-ng.env`
+- `run.sh`
+- `config.env`
 
 ## 安装依赖
 
@@ -17,15 +17,15 @@ sudo apt install -y stress-ng lm-sensors
 ## 使用方法
 
 ```bash
-cd tasks/server-stress-test
-chmod +x run-stress-ng.sh
-./run-stress-ng.sh
+cd tasks/server-stress-test/stress-ng
+chmod +x run.sh
+./run.sh
 ```
 
 如果要自定义配置：
 
 ```bash
-./run-stress-ng.sh /path/to/your-config.env
+./run.sh /path/to/your-config.env
 ```
 
 ## 说明

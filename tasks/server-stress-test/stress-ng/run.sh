@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="/config.stress-ng.env"
+CONFIG_FILE="${SCRIPT_DIR}/config.env"
 if [[ -f "${1:-}" ]]; then
   CONFIG_FILE="$1"
 fi
