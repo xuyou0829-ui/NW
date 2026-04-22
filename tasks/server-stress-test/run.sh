@@ -61,7 +61,7 @@ if (( CONTROL_WINDOW_SECONDS <= 0 )); then
   exit 1
 fi
 
-for cmd in stress-ng awk grep sed date tail; do
+for cmd in stressapptest awk grep sed date tail; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "Missing required command: $cmd" >&2
     exit 1
@@ -75,7 +75,7 @@ mkdir -p "$LOG_DIR" "$STATE_DIR" "$REPORT_DIR"
 
 EVENT_LOG="${LOG_DIR}/events.log"
 METRICS_LOG="${LOG_DIR}/metrics.csv"
-STRESS_LOG="${LOG_DIR}/stress-ng.log"
+STRESS_LOG="${LOG_DIR}/stressapptest.log"
 STATE_FILE="${STATE_DIR}/current_state.env"
 SUMMARY_FILE="${REPORT_DIR}/summary.txt"
 RUN_ID=$(date -u +"%Y%m%dT%H%M%SZ")
@@ -360,7 +360,7 @@ plan_vm_load() {
 refresh_alerts() {
   local event_alerts stress_alerts combined
   event_alerts=$(tail -n 50 "$EVENT_LOG" 2>/dev/null | grep -Ei 'fail|error|warn|abort|exceed|interrupt|EDAC|temperature .*exceeded' | tail -n 3 || true)
-  stress_alerts=$(tail -n 200 "$STRESS_LOG" 2>/dev/null | grep -Ei 'error|fail|warn|oom|killed|segfault|assert|corrupt|mce|edac|ecc|miscompare' | tail -n 3 || true)
+  stress_alerts=$(tail -n 200 "$STRESS_LOG" 2>/dev/null | grep -Ei 'error|fail|warn|miscompare|corrupt|fatal|mce|edac|ecc' | tail -n 3 || true)
   combined=$(printf "%s\n%s\n" "$event_alerts" "$stress_alerts" | awk 'NF && !seen[$0]++')
 
   if [[ -n "$combined" ]]; then
@@ -583,9 +583,9 @@ run_burn_chunk() {
 
     log_event "Running ${CURRENT_PHASE} chunk ${chunk_num}/${CHUNKS_PER_BURN} segment for ${segment_seconds}s with ${VM_ACTIVE_WORKERS} workers x $(format_mib_to_gib "$VM_ACTIVE_BYTES_MIB")GiB (total $(format_mib_to_gib "$VM_ACTIVE_TOTAL_MIB")GiB)"
 
-    local stress_cmd=(stress-ng --vm "$VM_ACTIVE_WORKERS" --vm-bytes "${VM_ACTIVE_BYTES_MIB}M" --vm-keep --vm-method "$VM_METHOD" --verify --timeout "${segment_seconds}s" --metrics-brief)
+    local stress_cmd=(stressapptest -s "$segment_seconds" -M "$VM_ACTIVE_TOTAL_MIB" -m "$VM_ACTIVE_WORKERS" -W -v 8)
     if (( CPU_WORKERS > 0 )); then
-      stress_cmd+=(--cpu "$CPU_WORKERS")
+      stress_cmd+=(-C "$CPU_WORKERS")
     fi
 
     "${stress_cmd[@]}" >> "$STRESS_LOG" 2>&1 &
@@ -612,7 +612,7 @@ run_burn_chunk() {
 
     if (( exit_code != 0 )); then
       STATUS="failed"
-      FAIL_REASON="stress-ng failed in ${CURRENT_PHASE} chunk ${chunk_num} with exit code ${exit_code}"
+      FAIL_REASON="stressapptest failed in ${CURRENT_PHASE} chunk ${chunk_num} with exit code ${exit_code}"
       log_event "$FAIL_REASON"
       return 1
     fi

@@ -2,7 +2,7 @@
 
 这个目录用于存放服务器内存压力测试相关的脚本、配置、日志和报告。
 
-当前实现为 Ubuntu / Linux 上的 Bash 方案，围绕 `stress-ng` 做多阶段内存压力测试。
+当前实现为 Ubuntu / Linux 上的 Bash 方案，围绕 `stressapptest` 做多阶段内存压力测试。
 
 ## 目录说明
 
@@ -36,7 +36,7 @@
 
 ```bash
 sudo apt update
-sudo apt install -y stress-ng lm-sensors
+sudo apt install -y stressapptest lm-sensors
 ```
 
 `sensors` 读不到也能跑，只是最终报告会标记为 warning。
@@ -67,7 +67,6 @@ chmod +x run.sh
 - `MEMORY_TARGET_PERCENT=80`
 - `MEMORY_MAX_PERCENT=85`
 - `VM_WORKERS=8`
-- `VM_METHOD=all`
 - `CPU_WORKERS=0`
 - `CONTROL_WINDOW_SECONDS=300`
 - `MEMORY_RANGE_GRACE_SECONDS=900`
@@ -92,12 +91,12 @@ chmod +x run.sh
 
 - `logs/events.log`
 - `logs/metrics.csv`
-- `logs/stress-ng.log`
+- `logs/stressapptest.log`
 - `report/summary.txt`
 
 ## 判定逻辑
 
-- `stress-ng` 异常退出：FAIL
+- `stressapptest` 异常退出：FAIL
 - 温度超阈值：FAIL
 - 新增 EDAC UE 错误：FAIL
 - 新增 EDAC CE 错误：PASS WITH WARNING
