@@ -34,6 +34,7 @@ chmod +x run.sh
 - 默认日志目录：`logs-stress-ng/`
 - 默认状态目录：`state-stress-ng/`
 - 默认报告目录：`report-stress-ng/`
+- 默认 chunk 时长：`4 小时`
 
 ## 适用场景
 
