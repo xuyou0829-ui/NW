@@ -194,6 +194,28 @@ progress_pct() {
   awk -v part="$1" -v whole="$2" 'BEGIN { if (whole <= 0) { printf "0.0" } else { printf "%.1f", (part / whole) * 100 } }'
 }
 
+render_progress_bar() {
+  local part whole width filled empty bar
+  part=$1
+  whole=$2
+  width=${3:-28}
+
+  if (( whole <= 0 )); then
+    filled=0
+  else
+    filled=$(( part * width / whole ))
+    if (( filled > width )); then
+      filled=$width
+    fi
+  fi
+
+  empty=$((width - filled))
+  printf '['
+  printf '%*s' "$filled" '' | tr ' ' '#'
+  printf '%*s' "$empty" '' | tr ' ' '-'
+  printf ']'
+}
+
 max_float() {
   awk -v a="$1" -v b="$2" 'BEGIN { if (a == "N/A") print b; else if (b == "N/A") print a; else if (a + 0 >= b + 0) print a; else print b }'
 }
@@ -398,7 +420,7 @@ update_live_metrics() {
 }
 
 render_dashboard() {
-  local now overall_elapsed phase_elapsed phase_total remaining overall_pct phase_pct chunk_elapsed chunk_remaining display_overall_elapsed display_phase_elapsed
+  local now overall_elapsed phase_elapsed phase_total remaining overall_pct phase_pct chunk_elapsed chunk_remaining display_overall_elapsed display_phase_elapsed overall_bar phase_bar
   now=$(date +%s)
   overall_elapsed=$((now - START_TS))
   phase_elapsed=$((now - PHASE_START_TS))
@@ -423,6 +445,8 @@ render_dashboard() {
 
   overall_pct=$(progress_pct "$display_overall_elapsed" "$TOTAL_SECONDS")
   phase_pct=$(progress_pct "$display_phase_elapsed" "$phase_total")
+  overall_bar=$(render_progress_bar "$display_overall_elapsed" "$TOTAL_SECONDS")
+  phase_bar=$(render_progress_bar "$display_phase_elapsed" "$phase_total")
   chunk_elapsed=$((now - CHUNK_START_TS))
   chunk_remaining=$((CHUNK_DURATION - chunk_elapsed))
   remaining=$((TOTAL_SECONDS - overall_elapsed))
@@ -438,7 +462,9 @@ Status            : ${STATUS}
 Current phase     : ${CURRENT_PHASE} (${CURRENT_PHASE_INDEX})
 Current chunk     : ${CURRENT_CHUNK}
 Overall progress  : ${overall_pct}% ($(human_time "$display_overall_elapsed") / $(human_time "$TOTAL_SECONDS"))
+Overall bar       : ${overall_bar}
 Phase progress    : ${phase_pct}% ($(human_time "$display_phase_elapsed") / $(human_time "$phase_total"))
+Phase bar         : ${phase_bar}
 Time remaining    : $(human_time "$remaining")
 Chunk remaining   : $(human_time "$chunk_remaining")
 
