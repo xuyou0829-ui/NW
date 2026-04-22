@@ -6,11 +6,14 @@
 
 ## 目录说明
 
-- `config.env`：测试配置
-- `run.sh`：主控脚本
-- `logs/`：运行时日志
-- `state/`：当前状态文件
-- `report/`：最终报告
+- `config.env`：stressapptest 版本配置
+- `run.sh`：stressapptest 主控脚本
+- `run-stress-ng.sh`：stress-ng 独立版本主控脚本
+- `config.stress-ng.env`：stress-ng 独立版本配置
+- `logs/`：stressapptest 运行时日志
+- `state/`：stressapptest 当前状态文件
+- `report/`：stressapptest 最终报告
+- `logs-stress-ng/` / `state-stress-ng/` / `report-stress-ng/`：stress-ng 独立版本输出
 
 ## 默认测试策略
 
